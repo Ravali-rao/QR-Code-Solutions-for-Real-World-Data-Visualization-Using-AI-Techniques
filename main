@@ -1,0 +1,80 @@
+from flask import Flask, render_template, request, redirect, url_for, send_file, flash
+import qrcode
+import cv2
+from pyzbar.pyzbar import decode
+import numpy as np
+import os
+
+app = Flask(__name__)
+app.secret_key = "secretkey"  # Required for flash messages
+UPLOAD_FOLDER = 'uploads'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Ensure the upload folder exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Route for generating QR code
+@app.route('/generate', methods=['GET', 'POST'])
+def generate_qr():
+    if request.method == 'POST':
+        data = request.form.get('data')
+        if data:
+            # Generate QR code
+            filename = os.path.join(app.config['UPLOAD_FOLDER'], "generated_qr.png")
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(data)
+            qr.make(fit=True)
+            img = qr.make_image(fill="black", back_color="white")
+            img.save(filename)
+            flash("QR Code generated successfully!")
+            return send_file(filename, as_attachment=True)
+        else:
+            flash("Please enter data to generate QR code.")
+    return render_template('generate_qr.html')
+
+# Route for scanning QR code
+@app.route('/scan', methods=['GET', 'POST'])
+def scan_qr():
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            flash("No file part")
+            return redirect(request.url)
+        file = request.files['file']
+        if file.filename == '':
+            flash("No selected file")
+            return redirect(request.url)
+        
+        # Save uploaded file
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        file.save(filepath)
+
+        # Scan and decode the QR code
+        img = cv2.imread(filepath)
+        decoded_data = None
+        for barcode in decode(img):
+            decoded_data = barcode.data.decode("utf-8")
+            # Draw rectangle around QR code in the image
+            points = barcode.polygon
+            if len(points) == 4:
+                pts = [tuple(point) for point in points]
+                cv2.polylines(img, [np.array(pts, np.int32)], True, (0, 255, 0), 3)
+        
+        if decoded_data:
+            flash(f"Data found in QR code: {decoded_data}")
+        else:
+            flash("Could not decode the QR code.")
+        os.remove(filepath)  # Optional: remove the file after processing
+    return render_template('scan_qr.html')
+
+# Home route
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+if __name__ == "__main__":
+    app.run(debug=True)
